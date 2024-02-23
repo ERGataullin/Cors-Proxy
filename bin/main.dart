@@ -16,6 +16,7 @@ const headersToSpoofBeforeForwardToRemote = [
 const headersNotToForwardFromRemote = [
   HttpHeaders.connectionHeader,
   HttpHeaders.locationHeader,
+  'link',
 ];
 const headersToSpoofBeforeForwardFromRemote = [
   HttpHeaders.locationHeader,
