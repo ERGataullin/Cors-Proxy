@@ -93,7 +93,7 @@ void main(List<String> arguments) async {
   final dotEnvFile = arguments.firstOrNull ?? '.env';
   final config = Config.load(dotEnvFile);
 
-  stdout.write('Starting mirror server ${config.local}');
+  stdout.write('Starting mirror server');
   if (config.local.basicAuth != null) stdout.write(' [Local auth]');
   if (config.proxy != null) {
     stdout.write(' [Through HTTP proxy]');
@@ -104,9 +104,19 @@ void main(List<String> arguments) async {
     }
   }
 
+  final securityContext = SecurityContext()
+    ..useCertificateChain(localFile('../certificates/server_chain.pem'))
+    ..usePrivateKey(
+      localFile('../certificates/server_key.pem'),
+      password: 'dartdart',
+    );
   late final HttpServer server;
   try {
-    server = await HttpServer.bind(config.local.host, config.local.port);
+    server = await HttpServer.bindSecure(
+      InternetAddress.anyIPv4,
+      config.local.port,
+      securityContext,
+    );
   } catch (error) {
     stdout.writeln(' [Error]');
     stderr
@@ -311,3 +321,5 @@ void main(List<String> arguments) async {
     );
   });
 }
+
+String localFile(String path) => Platform.script.resolve(path).toFilePath();
