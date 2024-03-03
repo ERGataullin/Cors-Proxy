@@ -107,6 +107,7 @@ void main(List<String> arguments) async {
   late final HttpServer server;
   try {
     if (config.secure) {
+      stdout.write(' [Over HTTPS]');
       final securityContext = SecurityContext()
         ..useCertificateChain(localFile(config.certificateChainPath!))
         ..usePrivateKey(
@@ -114,11 +115,12 @@ void main(List<String> arguments) async {
           password: config.certificatePrivateKeyPassword,
         );
       server = await HttpServer.bindSecure(
-        config.local.host,
+        InternetAddress.anyIPv4,
         config.local.port,
         securityContext,
       );
     } else {
+      stdout.write(' [Over HTTP]');
       server = await HttpServer.bind(config.local.host, config.local.port);
     }
   } catch (error) {
