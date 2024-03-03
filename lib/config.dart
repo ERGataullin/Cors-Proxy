@@ -12,7 +12,7 @@ class Config {
   }) : assert(
           local.scheme != 'https' ||
               certificateChainPath != null && certificatePrivateKeyPath != null,
-          'The local URI scheme is HTTPS, but no certificate chain or private key provided',
+          'The local URI scheme is HTTPS, but no certificate chain and private key paths provided',
         );
 
   factory Config.load(String? path) {
