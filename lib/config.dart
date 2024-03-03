@@ -3,10 +3,17 @@ import 'dart:io';
 import 'package:dotenv/dotenv.dart';
 
 class Config {
-  const Config._({
+  Config._({
     required this.local,
     this.proxy,
-  });
+    this.certificateChainPath,
+    this.certificatePrivateKeyPath,
+    this.certificatePrivateKeyPassword,
+  }) : assert(
+          local.scheme != 'https' ||
+              certificateChainPath != null && certificatePrivateKeyPath != null,
+          'The local URI scheme is HTTPS, but no certificate chain or private key provided',
+        );
 
   factory Config.load(String? path) {
     if (path != null && File(path).existsSync())
@@ -16,15 +23,28 @@ class Config {
 
     final proxy = getUri('HTTP_PROXY');
     final local = getUri('LOCAL') ?? Uri.http('127.0.0.1:8080');
+    final certificateChainPath = getString('CERTIFICATE_CHAIN_PATH');
+    final certificatePrivateKeyPath = getString('CERTIFICATE_PRIVATE_KEY_PATH');
+    final certificatePrivateKeyPassword = getString(
+      'CERTIFICATE_PRIVATE_KEY_PASSWORD',
+    );
 
     return Config._(
       proxy: proxy,
       local: local,
+      certificateChainPath: certificateChainPath,
+      certificatePrivateKeyPath: certificatePrivateKeyPath,
+      certificatePrivateKeyPassword: certificatePrivateKeyPassword,
     );
   }
 
   final Uri? proxy;
   final Uri local;
+  final String? certificateChainPath;
+  final String? certificatePrivateKeyPath;
+  final String? certificatePrivateKeyPassword;
+
+  bool get secure => local.scheme == 'https';
 
   static final dotenv = DotEnv();
 

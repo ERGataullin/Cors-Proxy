@@ -1,0 +1,4 @@
+LOCAL_URI = https://127.0.0.1:8080/
+CERTIFICATE_CHAIN_PATH = ../.env/certificate/chain.pem
+CERTIFICATE_PRIVATE_KEY_PATH = ../.env/certificate/private_key.pem
+CERTIFICATE_PRIVATE_KEY_PASSWORD = dartdart
