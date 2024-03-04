@@ -115,7 +115,7 @@ void main(List<String> arguments) async {
           password: config.certificatePrivateKeyPassword,
         );
       server = await HttpServer.bindSecure(
-        InternetAddress.anyIPv4,
+        config.local.host,
         config.local.port,
         securityContext,
       );
@@ -211,120 +211,133 @@ void main(List<String> arguments) async {
               if (!remoteUriFromPath.hasAuthority) 'authority',
             ].join(' and '),
             'provided',
-          ].join(' ');
+          ].join(' ')
+          ..close();
+        return;
       }
     } catch (e) {
       remoteUri = null;
       response
         ..statusCode = HttpStatus.internalServerError
-        ..reasonPhrase = e.toString();
-    }
-
-    if (remoteUri == null) {
-      response.write(null);
+        ..reasonPhrase = e.toString()
+        ..close();
       return;
     }
 
     stdout.writeln('[$requestId] Forwarding: ${request.method} $remoteUri');
 
-    (client
-          ..userAgent =
-              request.headers[HttpHeaders.userAgentHeader]?.singleOrNull)
-        .openUrl(request.method, remoteUri)
-        .then((requestToRemote) async {
-      requestToRemote.followRedirects = false;
+    try {
+      (client
+            ..userAgent =
+                request.headers[HttpHeaders.userAgentHeader]?.singleOrNull)
+          .openUrl(request.method, remoteUri)
+          .then((requestToRemote) async {
+        requestToRemote.followRedirects = false;
 
-      request.headers.forEach((headerName, headerValues) {
-        // Filter out headers
-        if (!headersNotToForwardToRemote.contains(headerName)) {
-          // Spoof headers to look like from the original server
-          if (headersToSpoofBeforeForwardToRemote.contains(headerName))
-            requestToRemote.headers.add(
-              requestHeadersReplacements[headerName] ?? headerName,
-              headerValues.map(
-                (value) => value.replaceAll(
-                  config.local
-                      .resolveUri(Uri(path: request.uri.toString()))
-                      .toString(),
-                  request.uri.toString(),
-                ),
-              ),
-            );
-          else
-            // Forward headers as-is
-            requestToRemote.headers.add(
-              requestHeadersReplacements[headerName] ?? headerName,
-              headerValues,
-            );
-        }
-      });
-
-      // If there's content pipe request body
-      if (request.contentLength > 0) await requestToRemote.addStream(request);
-
-      return requestToRemote.close();
-    }).then(
-      (remoteResponse) async {
-        stdout.writeln(
-            '[$requestId] Remote response: ${remoteResponse.statusCode}');
-        remoteResponse.headers.forEach((headerName, headerValues) {
+        request.headers.forEach((headerName, headerValues) {
           // Filter out headers
-          if (!headersNotToForwardFromRemote.contains(headerName))
-          // Spoof headers, so they'll point to mirror
-          if (headersToSpoofBeforeForwardFromRemote.contains(headerName))
-            response.headers.add(
-              responseHeadersReplacements[headerName] ?? headerName,
-              headerValues.map(
-                (value) => value.replaceAll(
-                  request.uri.toString(),
-                  config.local
-                      .resolveUri(Uri(path: request.uri.toString()))
-                      .toString(),
+          if (!headersNotToForwardToRemote.contains(headerName)) {
+            // Spoof headers to look like from the original server
+            if (headersToSpoofBeforeForwardToRemote.contains(headerName))
+              requestToRemote.headers.add(
+                requestHeadersReplacements[headerName] ?? headerName,
+                headerValues.map(
+                  (value) => value.replaceAll(
+                    config.local
+                        .resolveUri(Uri(path: request.uri.toString()))
+                        .toString(),
+                    request.uri.toString(),
+                  ),
                 ),
-              ),
-            );
-          // Add headers as-is
-          else
-            response.headers.add(
-              responseHeadersReplacements[headerName] ?? headerName,
-              headerValues,
-            );
+              );
+            else
+              // Forward headers as-is
+              requestToRemote.headers.add(
+                requestHeadersReplacements[headerName] ?? headerName,
+                headerValues,
+              );
+          }
         });
-        response.statusCode = remoteResponse.statusCode;
-        addCORSHeaders(request, response);
 
-        // Pipe remote response
-        remoteResponse.pipe(response).then(
-          (_) => stdout.writeln('[$requestId] Forwarded.'),
-          onError: (dynamic error) {
-            final _error = error.toString().splitMapJoin(
-                  '\n',
-                  onNonMatch: (part) => '[$requestId] $part',
-                );
-            stderr
-              ..writeln('[$requestId] Response forwarding error:')
-              ..writeln(_error);
-          },
-        ).ignore();
-      },
-      onError: (dynamic error) {
-        final _error = error.toString().splitMapJoin(
-              '\n',
-              onNonMatch: (part) => '[$requestId] $part',
-            );
-        stderr
-          ..writeln('[$requestId] Mirror error:')
-          ..writeln(_error);
+        // If there's content pipe request body
+        if (request.contentLength > 0) await requestToRemote.addStream(request);
 
-        addCORSHeaders(request, response);
-        response
-          ..statusCode = HttpStatus.internalServerError
-          ..headers.contentType = ContentType.text
-          ..writeln('PROXY///ERROR///INTERNAL')
-          ..write(error)
-          ..close();
-      },
-    );
+        return requestToRemote.close();
+      }).then(
+        (remoteResponse) async {
+          stdout.writeln(
+              '[$requestId] Remote response: ${remoteResponse.statusCode}');
+          remoteResponse.headers.forEach((headerName, headerValues) {
+            // Filter out headers
+            if (!headersNotToForwardFromRemote.contains(headerName))
+            // Spoof headers, so they'll point to mirror
+            if (headersToSpoofBeforeForwardFromRemote.contains(headerName))
+              response.headers.add(
+                responseHeadersReplacements[headerName] ?? headerName,
+                headerValues.map(
+                  (value) => value.replaceAll(
+                    request.uri.toString(),
+                    config.local
+                        .resolveUri(Uri(path: request.uri.toString()))
+                        .toString(),
+                  ),
+                ),
+              );
+            // Add headers as-is
+            else
+              response.headers.add(
+                responseHeadersReplacements[headerName] ?? headerName,
+                headerValues,
+              );
+          });
+          response.statusCode = remoteResponse.statusCode;
+          addCORSHeaders(request, response);
+
+          // Pipe remote response
+          remoteResponse.pipe(response).then(
+            (_) => stdout.writeln('[$requestId] Forwarded.'),
+            onError: (dynamic error) {
+              final _error = error.toString().splitMapJoin(
+                    '\n',
+                    onNonMatch: (part) => '[$requestId] $part',
+                  );
+              stderr
+                ..writeln('[$requestId] Response forwarding error:')
+                ..writeln(_error);
+            },
+          ).ignore();
+        },
+        onError: (dynamic error) {
+          final _error = error.toString().splitMapJoin(
+                '\n',
+                onNonMatch: (part) => '[$requestId] $part',
+              );
+          stderr
+            ..writeln('[$requestId] Mirror error:')
+            ..writeln(_error);
+
+          addCORSHeaders(request, response);
+          response
+            ..statusCode = HttpStatus.internalServerError
+            ..headers.contentType = ContentType.text
+            ..writeln('PROXY///ERROR///INTERNAL')
+            ..write(error)
+            ..close();
+        },
+      );
+    } catch (error) {
+      stdout.writeln(' [Error]');
+      stderr
+        ..writeln('Unable to execute remote request:')
+        ..writeln(error);
+      response
+        ..statusCode = HttpStatus.internalServerError
+        ..headers.contentType = ContentType.text
+        ..writeln('PROXY///ERROR///INTERNAL')
+        ..write(error)
+        ..close();
+      return;
+    }
   });
 }
 
