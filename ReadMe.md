@@ -24,8 +24,8 @@ REMOTE_URI=http://localhost:8080/
 LOCAL_URI=http://127.0.0.1:8081/
 ```
 
-### Via config (`.env` file)
-Use environmental variables or `.env` file in working directory or pass it's
+### Via config (`.env/.config` file)
+Use environmental variables or `.env/.config` file in working directory or pass it's
 location as first argument:
 
 ```dotenv

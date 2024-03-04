@@ -195,24 +195,24 @@ void main(List<String> arguments) async {
         ),
       );
 
-      assert(remoteUriFromPath.hasScheme, 'No scheme provided');
-      assert(remoteUriFromPath.hasAuthority, 'No authority provided');
-
-      remoteUri = remoteUriFromPath.replace(
-        scheme: remoteUriFromPath.scheme,
-        userInfo: remoteUriFromPath.userInfo,
-        host: remoteUriFromPath.host,
-        port: remoteUriFromPath.port,
-        path: remoteUriFromPath.path,
-        query: request.uri.hasQuery ? request.uri.query : null,
-        fragment: request.uri.hasFragment ? request.uri.fragment : null,
-      );
-      // ignore: avoid_catching_errors
-    } on AssertionError catch (error) {
-      remoteUri = null;
-      response
-        ..statusCode = HttpStatus.badRequest
-        ..reasonPhrase = error.message.toString();
+      if (remoteUriFromPath.hasScheme && remoteUriFromPath.hasAuthority) {
+        remoteUri = remoteUriFromPath.replace(
+          query: request.uri.hasQuery ? request.uri.query : null,
+          fragment: request.uri.hasFragment ? request.uri.fragment : null,
+        );
+      } else {
+        remoteUri = null;
+        response
+          ..statusCode = HttpStatus.badRequest
+          ..reasonPhrase = [
+            'No',
+            [
+              if (!remoteUriFromPath.hasScheme) 'scheme',
+              if (!remoteUriFromPath.hasAuthority) 'authority',
+            ].join(' and '),
+            'provided',
+          ].join(' ');
+      }
     } catch (e) {
       remoteUri = null;
       response
