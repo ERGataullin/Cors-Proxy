@@ -94,7 +94,9 @@ void main(List<String> arguments) async {
   final config = Config.load(dotEnvFile);
 
   stdout.write('Starting mirror server');
-  if (config.local.basicAuth != null) stdout.write(' [Local auth]');
+  if (config.local.basicAuth != null) {
+    stdout.write(' [Local auth]');
+  }
   if (config.proxy != null) {
     stdout.write(' [Through HTTP proxy]');
     if (config.proxy!.scheme != 'http') {
@@ -260,7 +262,10 @@ void main(List<String> arguments) async {
         });
 
         // If there's content pipe request body
-        if (request.contentLength > 0) await requestToRemote.addStream(request);
+        if (request.contentLength > 0) {
+          await requestToRemote.addStream(request);
+        }
+        await requestToRemote.flush();
 
         return requestToRemote.close();
       }).then(

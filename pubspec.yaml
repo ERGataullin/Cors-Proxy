@@ -10,6 +10,5 @@ environment:
 
 dependencies:
   dotenv: ^4.1.0
-  uri: ^1.0.0
 dev_dependencies:
   zekfad_lints: ^1.1.0
