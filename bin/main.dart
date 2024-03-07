@@ -299,7 +299,7 @@ void main(List<String> arguments) async {
           addCORSHeaders(request, response);
 
           // Pipe remote response
-          remoteResponse.pipe(response).then(
+          await remoteResponse.pipe(response).then(
             (_) => stdout.writeln('[$requestId] Forwarded.'),
             onError: (dynamic error) {
               final _error = error.toString().splitMapJoin(
@@ -310,7 +310,9 @@ void main(List<String> arguments) async {
                 ..writeln('[$requestId] Response forwarding error:')
                 ..writeln(_error);
             },
-          ).ignore();
+          );
+          await response.flush();
+          await response.close();
         },
         onError: (dynamic error) {
           final _error = error.toString().splitMapJoin(
