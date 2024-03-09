@@ -234,7 +234,9 @@ void main(List<String> arguments) async {
                 request.headers[HttpHeaders.userAgentHeader]?.singleOrNull)
           .openUrl(request.method, remoteUri)
           .then((requestToRemote) async {
-        requestToRemote.followRedirects = false;
+        requestToRemote
+          ..followRedirects = false
+          ..persistentConnection = false;
 
         request.headers.forEach((headerName, headerValues) {
           // Filter out headers
