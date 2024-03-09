@@ -350,5 +350,4 @@ void main(List<String> arguments) async {
   });
 }
 
-String localFile(String path) =>
-    Platform.script.resolve(path).toFilePath(windows: true);
+String localFile(String path) => Platform.script.resolve(path).toFilePath();
