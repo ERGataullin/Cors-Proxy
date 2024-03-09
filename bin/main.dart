@@ -155,7 +155,7 @@ void main(List<String> arguments) async {
 
   var requestId = 0;
 
-  server.listen((request) {
+  server.forEach((request) {
     requestId++;
 
     final response = request.response;
@@ -348,4 +348,5 @@ void main(List<String> arguments) async {
   });
 }
 
-String localFile(String path) => Platform.script.resolve(path).toFilePath();
+String localFile(String path) =>
+    Platform.script.resolve(path).toFilePath(windows: true);

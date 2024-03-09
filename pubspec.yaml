@@ -1,14 +1,14 @@
 publish_to: none
 
 name: dev_mirror
-description: Development proxy for accessing private APIs.
 version: 1.2.0
-homepage: https://github.com/Zekfad/dev-mirror
 
 environment:
   sdk: '>=3.1.0-0 <4.0.0'
 
 dependencies:
   dotenv: ^4.1.0
+  http: ^1.2.1
+
 dev_dependencies:
-  zekfad_lints: ^1.1.0
+  lints: ^3.0.0
