@@ -18,7 +18,11 @@ void main() async {
 }
 
 Future<void> _onRequest(HttpRequest request) async {
-  final Uri remoteUri = Uri.parse(request.uri.path.substring(1)).replace(
+  final Uri remoteUri = Uri.parse(
+    Uri.decodeComponent(
+      request.uri.path.substring(1),
+    ),
+  ).replace(
     query: request.uri.hasQuery ? request.uri.query : null,
     fragment: request.uri.hasFragment ? request.uri.fragment : null,
   );
