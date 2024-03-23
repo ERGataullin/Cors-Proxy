@@ -20,7 +20,7 @@ void main() async {
   final HttpServer server = await shelf_io.serve(
     handler,
     InternetAddress.anyIPv4,
-    8080,
+    443,
     securityContext: securityContext,
   );
 
@@ -34,20 +34,29 @@ Middleware _mapKakiHeader() {
   return (Handler handler) {
     return (Request request) async {
       final Request mappedRequest = request.change(
-        headers: {
-          for (final String headerName in request.headers.keys)
-            headerName == 'kaki' ? 'cookie' : headerName:
-                request.headers[headerName],
-        },
+        headers: request.headers.map(
+          (key, value) => MapEntry(
+            switch (key) {
+              'kaki' => 'cookie',
+              'host' => '',
+              _ => key,
+            },
+            value,
+          ),
+        ),
       );
       final Response originalResponse = await handler(mappedRequest);
 
       return originalResponse.change(
-        headers: {
-          for (final String headerName in request.headers.keys)
-            headerName == 'set-cookie' ? 'set-kaki' : headerName:
-                request.headers[headerName],
-        },
+        headers: originalResponse.headers.map(
+          (key, value) => MapEntry(
+            switch (key) {
+              'set-kaki' => 'set-cookie',
+              _ => key,
+            },
+            value,
+          ),
+        ),
       );
     };
   };
