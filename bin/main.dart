@@ -1,353 +1,163 @@
+import 'dart:async';
 import 'dart:io';
 
-import 'package:dev_mirror/config.dart';
-import 'package:dev_mirror/secure_compare.dart';
-import 'package:dev_mirror/uri_basic_auth.dart';
-import 'package:dev_mirror/uri_credentials.dart';
-import 'package:dev_mirror/uri_has_origin.dart';
+import 'package:http/http.dart' as http;
+import 'package:path/path.dart' as p;
+import 'package:shelf/shelf.dart';
+import 'package:shelf/shelf_io.dart' as shelf_io;
 
-/// Invalid string URI.
-const headersNotToForwardToRemote = [
-  HttpHeaders.hostHeader,
-];
-const headersToSpoofBeforeForwardToRemote = [
-  HttpHeaders.refererHeader,
-];
-const headersNotToForwardFromRemote = [
-  HttpHeaders.connectionHeader,
-  HttpHeaders.locationHeader,
-  'link',
-];
-const headersToSpoofBeforeForwardFromRemote = [
-  HttpHeaders.locationHeader,
-];
-const requestHeadersReplacements = {
-  'kaki': HttpHeaders.cookieHeader,
-};
-const responseHeadersReplacements = {
-  HttpHeaders.setCookieHeader: 'set-kaki',
-};
+final http.Client _client = http.Client();
 
-/// List of additional root CA
-final List<String> trustedRoots = [
-  [
-    72,
-    80,
-    78,
-    151,
-    76,
-    13,
-    172,
-    91,
-    92,
-    212,
-    118,
-    200,
-    32,
-    34,
-    116,
-    178,
-    76,
-    140,
-    113,
-    114,
-  ], // DST Root CA X3
-].map(String.fromCharCodes).toList();
+void main() async {
+  final FutureOr<Response> Function(Request) handler = const Pipeline()
+      .addMiddleware(logRequests())
+      .addMiddleware(_mapKakiHeader())
+      .addHandler(_handleRequest);
 
-/// Adds CORS headers to [response]
-void addCORSHeaders(HttpRequest request, HttpResponse response) {
-  final refererUri = Uri.tryParse(
-    request.headers[HttpHeaders.refererHeader]?.singleOrNull ?? '::INVALID::',
+  final SecurityContext securityContext = SecurityContext.defaultContext
+    ..useCertificateChain(r'/root/certificate/zerossl_certificate.crt')
+    ..usePrivateKey(r'/root/certificate/private.key');
+  final HttpServer server = await shelf_io.serve(
+    handler,
+    InternetAddress.anyIPv4,
+    443,
+    securityContext: securityContext,
   );
 
-  response.headers
-    ..set(
-      HttpHeaders.accessControlAllowOriginHeader,
-      (refererUri != null && refererUri.hasOrigin) ? refererUri.origin : '*',
-    )
-    ..set(
-      HttpHeaders.accessControlAllowMethodsHeader,
-      request.headers[HttpHeaders.accessControlRequestMethodHeader]
-              ?.join(',') ??
-          '*',
-    )
-    ..set(
-      HttpHeaders.accessControlAllowHeadersHeader,
-      request.headers[HttpHeaders.accessControlRequestHeadersHeader]
-              ?.join(',') ??
-          'authorization,*',
-    )
-    ..set(
-      HttpHeaders.accessControlAllowCredentialsHeader,
-      'true',
-    )
-    ..set(
-      HttpHeaders.accessControlExposeHeadersHeader,
-      request.headers[HttpHeaders.accessControlExposeHeadersHeader]
-              ?.join(',') ??
-          'authorization,*',
-    );
+  // Enable content compression
+  server.autoCompress = true;
+
+  print('Serving at http://${server.address.host}:${server.port}');
 }
 
-void main(List<String> arguments) async {
-  final dotEnvFile = arguments.firstOrNull ?? '.env/.config';
-  final config = Config.load(dotEnvFile);
-
-  stdout.write('Starting mirror server');
-  if (config.local.basicAuth != null) {
-    stdout.write(' [Local auth]');
-  }
-  if (config.proxy != null) {
-    stdout.write(' [Through HTTP proxy]');
-    if (config.proxy!.scheme != 'http') {
-      stdout.writeln(' [Error]');
-      stderr.writeln('Proxy URI must be valid.');
-      return;
-    }
-  }
-
-  late final HttpServer server;
-  try {
-    if (config.secure) {
-      stdout.write(' [Over HTTPS]');
-      final securityContext = SecurityContext()
-        ..useCertificateChain(localFile(config.certificateChainPath!))
-        ..usePrivateKey(
-          localFile(config.certificatePrivateKeyPath!),
-          password: config.certificatePrivateKeyPassword,
-        );
-      server = await HttpServer.bindSecure(
-        config.local.host,
-        config.local.port,
-        securityContext,
-      );
-    } else {
-      stdout.write(' [Over HTTP]');
-      server = await HttpServer.bind(config.local.host, config.local.port);
-    }
-  } catch (error) {
-    stdout.writeln(' [Error]');
-    stderr
-      ..writeln('Error unable to bind server:')
-      ..writeln(error);
-    return;
-  }
-  stdout.writeln(' [Done]');
-
-  final client = HttpClient()
-    ..autoUncompress = false
-    ..badCertificateCallback = (cert, host, port) =>
-        trustedRoots.contains(String.fromCharCodes(cert.sha1));
-
-  // Apply HTTP proxy
-  if (config.proxy case final Uri proxy) {
-    final credentials = proxy.httpClientCredentials;
-    if (credentials != null) {
-      client.addProxyCredentials(
-        proxy.host,
-        proxy.port,
-        'Basic',
-        credentials,
-      );
-    }
-    client.findProxy = (uri) => 'PROXY ${proxy.host}:${proxy.port}';
-  }
-
-  var requestId = 0;
-
-  server.forEach((request) {
-    requestId++;
-
-    final response = request.response;
-
-    // Handle preflight
-    if (request.method.toUpperCase() == 'OPTIONS' &&
-        request.headers[HttpHeaders.accessControlRequestMethodHeader] != null) {
-      addCORSHeaders(request, response);
-      stdout.writeln('[$requestId] Preflight handled.');
-      response
-        ..contentLength = 0
-        ..statusCode = HttpStatus.ok
-        ..close();
-      return;
-    }
-
-    final localBasicAuth = config.local.basicAuth;
-    if (localBasicAuth != null) {
-      final _userAuth =
-          request.headers[HttpHeaders.authorizationHeader]?.singleOrNull;
-      if (_userAuth == null || !secureCompare(_userAuth, localBasicAuth)) {
-        stdout.writeln('[$requestId] Unauthorized access denied.');
-        response
-          ..statusCode = HttpStatus.unauthorized
-          ..headers
-              .add(HttpHeaders.wwwAuthenticateHeader, 'Basic realm=Protected')
-          ..headers.contentType = ContentType.text
-          ..write('PROXY///ERROR///UNAUTHORIZED')
-          ..close();
-        return;
-      }
-    }
-
-    late final Uri? remoteUri;
-    try {
-      final remoteUriFromPath = Uri.parse(
-        Uri.decodeComponent(
-          request.uri.path.substring(1),
+Middleware _mapKakiHeader() {
+  return (Handler handler) {
+    return (Request request) async {
+      final Request mappedRequest = request.change(
+        headers: request.headers.map(
+          (key, value) => MapEntry(
+            switch (key) {
+              'kaki' => 'cookie',
+              'host' => '',
+              _ => key,
+            },
+            value,
+          ),
         ),
       );
+      final Response originalResponse = await handler(mappedRequest);
 
-      if (remoteUriFromPath.hasScheme && remoteUriFromPath.hasAuthority) {
-        remoteUri = remoteUriFromPath.replace(
-          query: request.uri.hasQuery ? request.uri.query : null,
-          fragment: request.uri.hasFragment ? request.uri.fragment : null,
-        );
-      } else {
-        remoteUri = null;
-        response
-          ..statusCode = HttpStatus.badRequest
-          ..reasonPhrase = [
-            'No',
-            [
-              if (!remoteUriFromPath.hasScheme) 'scheme',
-              if (!remoteUriFromPath.hasAuthority) 'authority',
-            ].join(' and '),
-            'provided',
-          ].join(' ')
-          ..close();
-        return;
-      }
-    } catch (e) {
-      remoteUri = null;
-      response
-        ..statusCode = HttpStatus.internalServerError
-        ..reasonPhrase = e.toString()
-        ..close();
-      return;
-    }
-
-    stdout.writeln('[$requestId] Forwarding: ${request.method} $remoteUri');
-
-    try {
-      (client
-            ..userAgent =
-                request.headers[HttpHeaders.userAgentHeader]?.singleOrNull)
-          .openUrl(request.method, remoteUri)
-          .then((requestToRemote) async {
-        requestToRemote
-          ..followRedirects = false
-          ..persistentConnection = false;
-
-        request.headers.forEach((headerName, headerValues) {
-          // Filter out headers
-          if (!headersNotToForwardToRemote.contains(headerName)) {
-            // Spoof headers to look like from the original server
-            if (headersToSpoofBeforeForwardToRemote.contains(headerName))
-              requestToRemote.headers.add(
-                requestHeadersReplacements[headerName] ?? headerName,
-                headerValues.map(
-                  (value) => value.replaceAll(
-                    config.local
-                        .resolveUri(Uri(path: request.uri.toString()))
-                        .toString(),
-                    request.uri.toString(),
-                  ),
-                ),
-              );
-            else
-              // Forward headers as-is
-              requestToRemote.headers.add(
-                requestHeadersReplacements[headerName] ?? headerName,
-                headerValues,
-              );
-          }
-        });
-
-        // If there's content pipe request body
-        if (request.contentLength > 0) {
-          await requestToRemote.addStream(request);
-        }
-        await requestToRemote.flush();
-
-        return requestToRemote.close();
-      }).then(
-        (remoteResponse) async {
-          stdout.writeln(
-              '[$requestId] Remote response: ${remoteResponse.statusCode}');
-          remoteResponse.headers.forEach((headerName, headerValues) {
-            // Filter out headers
-            if (!headersNotToForwardFromRemote.contains(headerName))
-            // Spoof headers, so they'll point to mirror
-            if (headersToSpoofBeforeForwardFromRemote.contains(headerName))
-              response.headers.add(
-                responseHeadersReplacements[headerName] ?? headerName,
-                headerValues.map(
-                  (value) => value.replaceAll(
-                    request.uri.toString(),
-                    config.local
-                        .resolveUri(Uri(path: request.uri.toString()))
-                        .toString(),
-                  ),
-                ),
-              );
-            // Add headers as-is
-            else
-              response.headers.add(
-                responseHeadersReplacements[headerName] ?? headerName,
-                headerValues,
-              );
-          });
-          response.statusCode = remoteResponse.statusCode;
-          addCORSHeaders(request, response);
-
-          // Pipe remote response
-          await remoteResponse.pipe(response).then(
-            (_) => stdout.writeln('[$requestId] Forwarded.'),
-            onError: (dynamic error) {
-              final _error = error.toString().splitMapJoin(
-                    '\n',
-                    onNonMatch: (part) => '[$requestId] $part',
-                  );
-              stderr
-                ..writeln('[$requestId] Response forwarding error:')
-                ..writeln(_error);
+      return originalResponse.change(
+        headers: originalResponse.headers.map(
+          (key, value) => MapEntry(
+            switch (key) {
+              'set-kaki' => 'set-cookie',
+              _ => key,
             },
-          );
-          await response.flush();
-          await response.close();
-        },
-        onError: (dynamic error) {
-          final _error = error.toString().splitMapJoin(
-                '\n',
-                onNonMatch: (part) => '[$requestId] $part',
-              );
-          stderr
-            ..writeln('[$requestId] Mirror error:')
-            ..writeln(_error);
-
-          addCORSHeaders(request, response);
-          response
-            ..statusCode = HttpStatus.internalServerError
-            ..headers.contentType = ContentType.text
-            ..writeln('PROXY///ERROR///INTERNAL')
-            ..write(error)
-            ..close();
-        },
+            value,
+          ),
+        ),
       );
-    } catch (error) {
-      stdout.writeln(' [Error]');
-      stderr
-        ..writeln('Unable to execute remote request:')
-        ..writeln(error);
-      response
-        ..statusCode = HttpStatus.internalServerError
-        ..headers.contentType = ContentType.text
-        ..writeln('PROXY///ERROR///INTERNAL')
-        ..write(error)
-        ..close();
-      return;
-    }
-  });
+    };
+  };
 }
 
-String localFile(String path) => Platform.script.resolve(path).toFilePath();
+Future<Response> _handleRequest(Request request) async {
+  Uri? uri = Uri.tryParse(
+    Uri.decodeComponent(request.url.path),
+  );
+
+  if (uri != null && uri.hasScheme && uri.hasAuthority) {
+    uri = uri.replace(
+      query: request.url.hasQuery ? request.url.query : null,
+      fragment: request.url.hasFragment ? request.url.fragment : null,
+    );
+  } else {
+    return Response.badRequest(body: 'No URL provided.');
+  }
+
+  return await _proxy(request, uri: uri);
+}
+
+/// Copied from shelf_proxy package
+Future<Response> _proxy(
+  Request serverRequest, {
+  Uri? uri,
+  String? proxyName,
+}) async {
+  // TODO(nweiz): Support WebSocket requests.
+
+  // TODO(nweiz): Handle TRACE requests correctly. See
+  // http://www.w3.org/Protocols/rfc2616/rfc2616-sec9.html#sec9.8
+  final Uri requestUrl = uri ?? serverRequest.url;
+  final clientRequest = http.StreamedRequest(serverRequest.method, requestUrl)
+    ..followRedirects = false
+    ..headers.addAll(serverRequest.headers)
+    ..headers['Host'] = uri?.authority ?? serverRequest.requestedUri.authority;
+
+  // Add a Via header. See
+  // http://www.w3.org/Protocols/rfc2616/rfc2616-sec14.html#sec14.45
+  _addHeader(
+    clientRequest.headers,
+    'via',
+    '${serverRequest.protocolVersion} $proxyName',
+  );
+
+  serverRequest
+      .read()
+      .forEach(clientRequest.sink.add)
+      .catchError(clientRequest.sink.addError)
+      .whenComplete(clientRequest.sink.close)
+      .ignore();
+  final clientResponse = await _client.send(clientRequest);
+  // Add a Via header. See
+  // http://www.w3.org/Protocols/rfc2616/rfc2616-sec14.html#sec14.45
+  _addHeader(clientResponse.headers, 'via', '1.1 $proxyName');
+
+  // Remove the transfer-encoding since the body has already been decoded by
+  // [client].
+  clientResponse.headers.remove('transfer-encoding');
+
+  // If the original response was gzipped, it will be decoded by [client]
+  // and we'll have no way of knowing its actual content-length.
+  if (clientResponse.headers['content-encoding'] == 'gzip') {
+    clientResponse.headers.remove('content-encoding');
+    clientResponse.headers.remove('content-length');
+
+    // Add a Warning header. See
+    // http://www.w3.org/Protocols/rfc2616/rfc2616-sec13.html#sec13.5.2
+    _addHeader(
+      clientResponse.headers,
+      'warning',
+      '214 $proxyName "GZIP decoded",',
+    );
+  }
+
+  // Make sure the Location header is pointing to the proxy server rather
+  // than the destination server, if possible.
+  if (clientResponse.isRedirect &&
+      clientResponse.headers.containsKey('location')) {
+    final location =
+        requestUrl.resolve(clientResponse.headers['location']!).toString();
+    if (p.url.isWithin(uri.toString(), location)) {
+      clientResponse.headers['location'] =
+          '/${p.url.relative(location, from: uri.toString())}';
+    } else {
+      clientResponse.headers['location'] = location;
+    }
+  }
+
+  return Response(
+    clientResponse.statusCode,
+    body: clientResponse.stream,
+    headers: clientResponse.headers,
+  );
+}
+
+// TODO(nweiz): use built-in methods for this when http and shelf support them.
+/// Add a header with [name] and [value] to [headers], handling existing headers
+/// gracefully.
+void _addHeader(Map<String, String> headers, String name, String value) {
+  final existing = headers[name];
+  headers[name] = existing == null ? value : '$existing, $value';
+}
