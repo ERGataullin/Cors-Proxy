@@ -69,8 +69,7 @@ Middleware _mapKakiHeader() {
         headers: request.headers.map(
           (key, value) => MapEntry(
             switch (key) {
-              'kaki' => 'cookie',
-              'host' => '',
+              'kaki' => HttpHeaders.cookieHeader,
               _ => key,
             },
             value,
@@ -83,7 +82,7 @@ Middleware _mapKakiHeader() {
         headers: originalResponse.headers.map(
           (key, value) => MapEntry(
             switch (key) {
-              'set-kaki' => 'set-cookie',
+              HttpHeaders.setCookieHeader => 'set-kaki',
               _ => key,
             },
             value,
