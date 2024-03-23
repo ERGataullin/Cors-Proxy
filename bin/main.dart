@@ -12,6 +12,7 @@ void main() async {
   final FutureOr<Response> Function(Request) handler = const Pipeline()
       .addMiddleware(logRequests())
       .addMiddleware(_mapKakiHeader())
+      .addMiddleware(_addCorsHeaders())
       .addHandler(_handleRequest);
 
   final SecurityContext securityContext = SecurityContext.defaultContext
@@ -28,6 +29,37 @@ void main() async {
   server.autoCompress = true;
 
   print('Serving at http://${server.address.host}:${server.port}');
+}
+
+Middleware _addCorsHeaders() {
+  return (Handler handler) {
+    return (Request request) async {
+      final Request mappedRequest = request.change(
+        headers: request.headers.map(
+          (key, value) => MapEntry(
+            switch (key) {
+              'kaki' => 'cookie',
+              'host' => '',
+              _ => key,
+            },
+            value,
+          ),
+        ),
+      );
+      final Response originalResponse = await handler(mappedRequest);
+
+      return originalResponse.change(
+        headers: {
+          ...originalResponse.headers,
+          HttpHeaders.accessControlAllowOriginHeader: '*',
+          HttpHeaders.accessControlAllowMethodsHeader: '*',
+          HttpHeaders.accessControlAllowHeadersHeader: 'authorization,*',
+          HttpHeaders.accessControlAllowCredentialsHeader: 'true',
+          HttpHeaders.accessControlExposeHeadersHeader: 'authorization,*',
+        },
+      );
+    };
+  };
 }
 
 Middleware _mapKakiHeader() {
@@ -63,6 +95,11 @@ Middleware _mapKakiHeader() {
 }
 
 Future<Response> _handleRequest(Request request) async {
+  if (request.method.toUpperCase() == 'OPTIONS' &&
+      request.headers[HttpHeaders.accessControlRequestMethodHeader] != null) {
+    return Response.ok(null);
+  }
+
   Uri? uri = Uri.tryParse(
     Uri.decodeComponent(request.url.path),
   );
