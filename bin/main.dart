@@ -72,10 +72,7 @@ Middleware _mapKakiHeader() {
               'kaki' => HttpHeaders.cookieHeader,
               _ => key,
             },
-            switch (key) {
-              HttpHeaders.locationHeader => null,
-              _ => value,
-            },
+            value,
           ),
         ),
       );
@@ -88,7 +85,10 @@ Middleware _mapKakiHeader() {
               HttpHeaders.setCookieHeader => 'set-kaki',
               _ => key,
             },
-            value,
+            switch (key) {
+              HttpHeaders.locationHeader => null,
+              _ => value,
+            },
           ),
         ),
       );
