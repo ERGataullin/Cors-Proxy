@@ -12,7 +12,7 @@ void main() async {
   final FutureOr<Response> Function(Request) handler = const Pipeline()
       .addMiddleware(logRequests())
       .addMiddleware(_mapKakiHeader())
-      .addMiddleware(_addCorsHeaders())
+      .addMiddleware(_mutateHeaders())
       .addHandler(_handleRequest);
 
   final SecurityContext securityContext = SecurityContext.defaultContext
@@ -31,7 +31,7 @@ void main() async {
   print('Serving at http://${server.address.host}:${server.port}');
 }
 
-Middleware _addCorsHeaders() {
+Middleware _mutateHeaders() {
   return (Handler handler) {
     return (Request request) async {
       final Request mappedRequest = request.change(
@@ -56,6 +56,7 @@ Middleware _addCorsHeaders() {
           HttpHeaders.accessControlAllowHeadersHeader: 'authorization,*',
           HttpHeaders.accessControlAllowCredentialsHeader: 'true',
           HttpHeaders.accessControlExposeHeadersHeader: 'authorization,*',
+          'link': null,
         },
       );
     };
@@ -115,7 +116,14 @@ Future<Response> _handleRequest(Request request) async {
     return Response.badRequest(body: 'No URL provided.');
   }
 
-  return await _proxy(request, uri: uri);
+  final Response response = await _proxy(request, uri: uri);
+
+  return response.change(
+    headers: {
+      ...response.headers,
+      'Link': null,
+    },
+  );
 }
 
 /// Copied from shelf_proxy package
