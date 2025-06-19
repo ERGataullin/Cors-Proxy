@@ -4,12 +4,12 @@ name: dev_mirror
 version: 1.2.0
 
 environment:
-  sdk: '>=3.1.0-0 <4.0.0'
+  sdk: ">=3.1.0-0 <4.0.0"
 
 dependencies:
-  http: ^1.2.1
-  shelf: ^1.4.1
-  path: ^1.9.0
+  http: ^1.4.0
+  shelf: ^1.4.2
+  shelf_proxy: ^1.0.4
 
 dev_dependencies:
   lints: ^3.0.0

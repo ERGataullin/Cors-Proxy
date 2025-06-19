@@ -1,17 +1,22 @@
 import 'dart:async';
 import 'dart:io';
 
-import 'package:http/http.dart' as http;
-import 'package:path/path.dart' as p;
 import 'package:shelf/shelf.dart';
 import 'package:shelf/shelf_io.dart' as shelf_io;
+import 'package:shelf/src/message.dart';
+import 'package:shelf_proxy/shelf_proxy.dart';
 
-final http.Client _client = http.Client();
+abstract class _CustomHeaders {
+  static const link = 'link';
+
+  static const kaki = 'kaki';
+
+  static const setKaki = 'set-kaki';
+}
 
 void main() async {
   final FutureOr<Response> Function(Request) handler = const Pipeline()
       .addMiddleware(logRequests())
-      .addMiddleware(_mapKakiHeader())
       .addMiddleware(_mutateHeaders())
       .addHandler(_handleRequest);
 
@@ -34,65 +39,31 @@ void main() async {
 Middleware _mutateHeaders() {
   return (Handler handler) {
     return (Request request) async {
-      final Request mappedRequest = request.change(
-        headers: request.headers.map(
-          (key, value) => MapEntry(
-            switch (key) {
-              'kaki' => 'cookie',
-              'host' => '',
-              _ => key,
-            },
-            value,
-          ),
-        ),
-      );
-      final Response originalResponse = await handler(mappedRequest);
+      final Request mutatedRequest = request.change(headers: {
+        ...request.headersAll,
+        if (request.headersAll[_CustomHeaders.kaki] case final Object cookie)
+          HttpHeaders.cookieHeader: cookie,
+        _CustomHeaders.kaki: null,
+        HttpHeaders.locationHeader: null,
+        HttpHeaders.hostHeader: null,
+      });
 
-      return originalResponse.change(
-        headers: {
-          ...originalResponse.headers,
-          HttpHeaders.accessControlAllowOriginHeader: '*',
-          HttpHeaders.accessControlAllowMethodsHeader: '*',
-          HttpHeaders.accessControlAllowHeadersHeader: 'authorization,*',
-          HttpHeaders.accessControlAllowCredentialsHeader: 'true',
-          HttpHeaders.accessControlExposeHeadersHeader: 'authorization,*',
-          'link': null,
-        },
-      );
-    };
-  };
-}
+      final Response response = await handler(mutatedRequest);
 
-Middleware _mapKakiHeader() {
-  return (Handler handler) {
-    return (Request request) async {
-      final Request mappedRequest = request.change(
-        headers: request.headers.map(
-          (key, value) => MapEntry(
-            switch (key) {
-              'kaki' => HttpHeaders.cookieHeader,
-              _ => key,
-            },
-            value,
-          ),
-        ),
-      );
-      final Response originalResponse = await handler(mappedRequest);
-
-      return originalResponse.change(
-        headers: originalResponse.headers.map(
-          (key, value) => MapEntry(
-            switch (key) {
-              HttpHeaders.setCookieHeader => 'set-kaki',
-              _ => key,
-            },
-            switch (key) {
-              HttpHeaders.locationHeader => null,
-              _ => value,
-            },
-          ),
-        ),
-      );
+      return response.change(headers: {
+        ...response.headers,
+        if (response.headersAll[HttpHeaders.setCookieHeader]
+            case final Object setCookie)
+          _CustomHeaders.setKaki: setCookie,
+        HttpHeaders.accessControlAllowOriginHeader: '*',
+        HttpHeaders.accessControlAllowMethodsHeader: '*',
+        HttpHeaders.accessControlAllowHeadersHeader: 'authorization,*',
+        HttpHeaders.accessControlAllowCredentialsHeader: 'true',
+        HttpHeaders.accessControlExposeHeadersHeader: 'authorization,*',
+        _CustomHeaders.link: null,
+        HttpHeaders.setCookieHeader: null,
+        HttpHeaders.locationHeader: null,
+      });
     };
   };
 }
@@ -103,108 +74,32 @@ Future<Response> _handleRequest(Request request) async {
     return Response.ok(null);
   }
 
-  Uri? uri = Uri.tryParse(
-    Uri.decodeComponent(request.url.path),
-  );
-
-  if (uri != null && uri.hasScheme && uri.hasAuthority) {
-    uri = uri.replace(
-      query: request.url.hasQuery ? request.url.query : null,
-      fragment: request.url.hasFragment ? request.url.fragment : null,
-    );
-  } else {
+  Uri? targetUri = Uri.tryParse(Uri.decodeComponent(request.url.path));
+  if (targetUri == null ||
+      targetUri.hasScheme != true ||
+      targetUri.hasAuthority != true) {
     return Response.badRequest(body: 'No URL provided.');
   }
 
-  final Response response = await _proxy(request, uri: uri);
-
-  return response.change(
-    headers: {
-      ...response.headers,
-      'Link': null,
-    },
+  final Request targetRequest = Request(
+    request.method,
+    targetUri,
+    protocolVersion: request.protocolVersion,
+    headers: request.headersAll,
+    handlerPath: '/',
+    url: Uri(
+      path: targetUri.path.substring(1),
+      queryParameters: targetUri.queryParameters,
+      fragment: targetUri.fragment,
+    ),
+    body: extractBody(request),
+    encoding: request.encoding,
+    context: request.context,
   );
-}
+  print(targetUri.queryParameters);
+  print(targetUri.queryParameters);
 
-/// Copied from shelf_proxy package
-Future<Response> _proxy(
-  Request serverRequest, {
-  Uri? uri,
-  String? proxyName,
-}) async {
-  // TODO(nweiz): Support WebSocket requests.
+  final Response response = await proxyHandler(targetUri.origin)(targetRequest);
 
-  // TODO(nweiz): Handle TRACE requests correctly. See
-  // http://www.w3.org/Protocols/rfc2616/rfc2616-sec9.html#sec9.8
-  final Uri requestUrl = uri ?? serverRequest.url;
-  final clientRequest = http.StreamedRequest(serverRequest.method, requestUrl)
-    ..followRedirects = false
-    ..headers.addAll(serverRequest.headers)
-    ..headers['Host'] = uri?.authority ?? serverRequest.requestedUri.authority;
-
-  // Add a Via header. See
-  // http://www.w3.org/Protocols/rfc2616/rfc2616-sec14.html#sec14.45
-  _addHeader(
-    clientRequest.headers,
-    'via',
-    '${serverRequest.protocolVersion} $proxyName',
-  );
-
-  serverRequest
-      .read()
-      .forEach(clientRequest.sink.add)
-      .catchError(clientRequest.sink.addError)
-      .whenComplete(clientRequest.sink.close)
-      .ignore();
-  final clientResponse = await _client.send(clientRequest);
-  // Add a Via header. See
-  // http://www.w3.org/Protocols/rfc2616/rfc2616-sec14.html#sec14.45
-  _addHeader(clientResponse.headers, 'via', '1.1 $proxyName');
-
-  // Remove the transfer-encoding since the body has already been decoded by
-  // [client].
-  clientResponse.headers.remove('transfer-encoding');
-
-  // If the original response was gzipped, it will be decoded by [client]
-  // and we'll have no way of knowing its actual content-length.
-  if (clientResponse.headers['content-encoding'] == 'gzip') {
-    clientResponse.headers.remove('content-encoding');
-    clientResponse.headers.remove('content-length');
-
-    // Add a Warning header. See
-    // http://www.w3.org/Protocols/rfc2616/rfc2616-sec13.html#sec13.5.2
-    _addHeader(
-      clientResponse.headers,
-      'warning',
-      '214 $proxyName "GZIP decoded",',
-    );
-  }
-
-  // Make sure the Location header is pointing to the proxy server rather
-  // than the destination server, if possible.
-  if (clientResponse.isRedirect &&
-      clientResponse.headers.containsKey('location')) {
-    final location =
-        requestUrl.resolve(clientResponse.headers['location']!).toString();
-    if (p.url.isWithin(uri.toString(), location)) {
-      clientResponse.headers['location'] =
-          '/${p.url.relative(location, from: uri.toString())}';
-    } else {
-      clientResponse.headers['location'] = location;
-    }
-  }
-
-  return Response(
-    clientResponse.statusCode,
-    body: clientResponse.stream,
-    headers: clientResponse.headers,
-  );
-}
-
-// TODO(nweiz): use built-in methods for this when http and shelf support them.
-/// Add a header with [name] and [value] to [headers], handling existing headers
-/// gracefully.
-void _addHeader(Map<String, String> headers, String name, String value) {
-  final existing = headers[name];
-  headers[name] = existing == null ? value : '$existing, $value';
+  return response;
 }
