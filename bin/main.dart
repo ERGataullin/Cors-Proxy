@@ -21,8 +21,8 @@ void main() async {
       .addHandler(_handleRequest);
 
   final SecurityContext securityContext = SecurityContext.defaultContext
-    ..useCertificateChain(r'/root/certificate/zerossl_certificate.crt')
-    ..usePrivateKey(r'/root/certificate/private.key');
+    ..useCertificateChain(r'/etc/letsencrypt/live/aniway.su/fullchain.pem')
+    ..usePrivateKey(r'/etc/letsencrypt/live/aniway.su/privkey.pem');
   final HttpServer server = await shelf_io.serve(
     handler,
     InternetAddress.anyIPv4,
