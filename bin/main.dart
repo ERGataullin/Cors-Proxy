@@ -20,14 +20,15 @@ void main() async {
       .addMiddleware(_mutateHeaders())
       .addHandler(_handleRequest);
 
-  final SecurityContext securityContext = SecurityContext.defaultContext
-    ..useCertificateChain(r'/etc/letsencrypt/live/aniway.su/fullchain.pem')
-    ..usePrivateKey(r'/etc/letsencrypt/live/aniway.su/privkey.pem');
+  // final SecurityContext securityContext = SecurityContext.defaultContext
+  //   ..useCertificateChain(r'/etc/letsencrypt/live/aniway.su/fullchain.pem')
+  //   ..usePrivateKey(r'/etc/letsencrypt/live/aniway.su/privkey.pem');
   final HttpServer server = await shelf_io.serve(
     handler,
-    InternetAddress.anyIPv4,
+    // InternetAddress.anyIPv4,
+    '192.168.31.7',
     443,
-    securityContext: securityContext,
+    // securityContext: securityContext,
   );
 
   // Enable content compression
@@ -89,15 +90,13 @@ Future<Response> _handleRequest(Request request) async {
     handlerPath: '/',
     url: Uri(
       path: targetUri.path.substring(1),
-      queryParameters: targetUri.queryParameters,
-      fragment: targetUri.fragment,
+      queryParameters: targetUri.hasQuery ? targetUri.queryParameters : null,
+      fragment: targetUri.hasFragment ? targetUri.fragment : null,
     ),
     body: extractBody(request),
     encoding: request.encoding,
     context: request.context,
   );
-  print(targetUri.queryParameters);
-  print(targetUri.queryParameters);
 
   final Response response = await proxyHandler(targetUri.origin)(targetRequest);
 
