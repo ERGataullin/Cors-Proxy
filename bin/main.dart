@@ -20,15 +20,14 @@ void main() async {
       .addMiddleware(_mutateHeaders())
       .addHandler(_handleRequest);
 
-  // final SecurityContext securityContext = SecurityContext.defaultContext
-  //   ..useCertificateChain(r'/etc/letsencrypt/live/aniway.su/fullchain.pem')
-  //   ..usePrivateKey(r'/etc/letsencrypt/live/aniway.su/privkey.pem');
+  final SecurityContext securityContext = SecurityContext.defaultContext
+    ..useCertificateChain(r'/etc/letsencrypt/live/aniway.su/fullchain.pem')
+    ..usePrivateKey(r'/etc/letsencrypt/live/aniway.su/privkey.pem');
   final HttpServer server = await shelf_io.serve(
     handler,
-    // InternetAddress.anyIPv4,
-    '192.168.31.7',
+    InternetAddress.anyIPv4,
     443,
-    // securityContext: securityContext,
+    securityContext: securityContext,
   );
 
   // Enable content compression
